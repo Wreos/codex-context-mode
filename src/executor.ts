@@ -9,6 +9,19 @@ import {
   type Language,
 } from "./runtime.js";
 
+const isWin = process.platform === "win32";
+
+/** Kill process tree — on Windows, proc.kill() only kills the shell, not children. */
+function killTree(proc: ReturnType<typeof spawn>): void {
+  if (isWin && proc.pid) {
+    try {
+      execSync(`taskkill /F /T /PID ${proc.pid}`, { stdio: "pipe" });
+    } catch { /* already dead */ }
+  } else {
+    proc.kill("SIGKILL");
+  }
+}
+
 export interface ExecResult {
   stdout: string;
   stderr: string;
@@ -133,14 +146,16 @@ export class PolyglotExecutor {
     cwd: string,
     timeout: number,
   ): Promise<ExecResult> {
-    const binPath = srcPath.replace(/\.rs$/, "");
+    const binSuffix = isWin ? ".exe" : "";
+    const binPath = srcPath.replace(/\.rs$/, "") + binSuffix;
 
     // Compile
     try {
-      execSync(`rustc ${srcPath} -o ${binPath} 2>&1`, {
+      execSync(`rustc ${srcPath} -o ${binPath}`, {
         cwd,
         timeout: Math.min(timeout, 30_000),
         encoding: "utf-8",
+        stdio: ["pipe", "pipe", "pipe"],
       });
     } catch (err: unknown) {
       const message = err instanceof Error ? (err as any).stderr || err.message : String(err);
@@ -206,16 +221,20 @@ export class PolyglotExecutor {
     timeout: number,
   ): Promise<ExecResult> {
     return new Promise((res) => {
+      // Only .cmd/.bat shims need shell on Windows; real executables don't.
+      // Using shell: true globally causes process-tree kill issues with MSYS2/Git Bash.
+      const needsShell = isWin && ["tsx", "ts-node", "elixir"].includes(cmd[0]);
       const proc = spawn(cmd[0], cmd.slice(1), {
         cwd,
         stdio: ["ignore", "pipe", "pipe"],
         env: this.#buildSafeEnv(cwd),
+        shell: needsShell,
       });
 
       let timedOut = false;
       const timer = setTimeout(() => {
         timedOut = true;
-        proc.kill("SIGKILL");
+        killTree(proc);
       }, timeout);
 
       // Stream-level byte cap: kill the process once combined stdout+stderr
@@ -233,7 +252,7 @@ export class PolyglotExecutor {
           stdoutChunks.push(chunk);
         } else if (!capExceeded) {
           capExceeded = true;
-          proc.kill("SIGKILL");
+          killTree(proc);
         }
       });
 
@@ -243,7 +262,7 @@ export class PolyglotExecutor {
           stderrChunks.push(chunk);
         } else if (!capExceeded) {
           capExceeded = true;
-          proc.kill("SIGKILL");
+          killTree(proc);
         }
       });
 
@@ -318,7 +337,7 @@ export class PolyglotExecutor {
     ];
 
     const env: Record<string, string> = {
-      PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
+      PATH: process.env.PATH ?? (isWin ? "" : "/usr/local/bin:/usr/bin:/bin"),
       HOME: realHome,
       TMPDIR: tmpDir,
       LANG: "en_US.UTF-8",
@@ -326,6 +345,18 @@ export class PolyglotExecutor {
       PYTHONUNBUFFERED: "1",
       NO_COLOR: "1",
     };
+
+    // Windows-critical env vars
+    if (isWin) {
+      const winVars = [
+        "SYSTEMROOT", "SystemRoot", "COMSPEC", "PATHEXT",
+        "USERPROFILE", "APPDATA", "LOCALAPPDATA", "TEMP", "TMP",
+        "GOROOT", "GOPATH",
+      ];
+      for (const key of winVars) {
+        if (process.env[key]) env[key] = process.env[key]!;
+      }
+    }
 
     for (const key of passthrough) {
       if (process.env[key]) {

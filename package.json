@@ -1,6 +1,6 @@
 {
   "name": "codex-context-mode",
-  "version": "0.8.1",
+  "version": "0.9.16",
   "type": "module",
   "description": "Codex CLI MCP server that saves your context window. Sandboxed code execution, FTS5 knowledge base, and intent-driven search.",
   "author": "Mert Koseoğlu",
@@ -30,6 +30,7 @@
     "build",
     "server.bundle.mjs",
     "start.sh",
+    "start.mjs",
     "AGENTS.md",
     "install.sh",
     "README.md",

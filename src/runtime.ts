@@ -40,9 +40,12 @@ export interface RuntimeMap {
 
 }
 
+const isWindows = process.platform === "win32";
+
 function commandExists(cmd: string): boolean {
   try {
-    execSync(`command -v ${cmd} 2>/dev/null`, { stdio: "pipe" });
+    const check = isWindows ? `where ${cmd}` : `command -v ${cmd}`;
+    execSync(check, { stdio: "pipe" });
     return true;
   } catch {
     return false;
@@ -51,8 +54,9 @@ function commandExists(cmd: string): boolean {
 
 function getVersion(cmd: string): string {
   try {
-    return execSync(`${cmd} --version 2>/dev/null`, {
+    return execSync(`${cmd} --version`, {
       encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"],
       timeout: 5000,
     })
       .trim()

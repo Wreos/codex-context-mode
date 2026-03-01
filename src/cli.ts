@@ -13,7 +13,7 @@
 import * as p from "@clack/prompts";
 import color from "picocolors";
 import { execSync } from "node:child_process";
-import { readFileSync, writeFileSync, copyFileSync, chmodSync, accessSync, readdirSync, constants } from "node:fs";
+import { readFileSync, writeFileSync, copyFileSync, cpSync, chmodSync, accessSync, readdirSync, rmSync, constants } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
@@ -29,7 +29,7 @@ const args = process.argv.slice(2);
 if (args[0] === "setup") {
   setup();
 } else if (args[0] === "doctor") {
-  doctor();
+  doctor().then((code) => process.exit(code));
 } else if (args[0] === "upgrade") {
   upgrade();
 } else {
@@ -61,7 +61,7 @@ function readSettings(): Record<string, unknown> | null {
 }
 
 function getHookScriptPath(): string {
-  return resolve(getPluginRoot(), "hooks", "pretooluse.sh");
+  return resolve(getPluginRoot(), "hooks", "pretooluse.mjs");
 }
 
 function getLocalVersion(): string {
@@ -85,12 +85,25 @@ async function fetchLatestVersion(): Promise<string> {
 }
 
 function getMarketplaceVersion(): string {
-  // Detect from our own path: .../plugins/cache/<marketplace>/<plugin>/<version>/
-  const root = getPluginRoot();
-  const match = root.match(/plugins\/cache\/[^/]+\/[^/]+\/(\d+\.\d+\.\d+[^/]*)/);
-  if (match) return match[1];
+  // Primary: read from installed_plugins.json (source of truth for Claude Code)
+  try {
+    const ipPath = resolve(homedir(), ".claude", "plugins", "installed_plugins.json");
+    const ipRaw = JSON.parse(readFileSync(ipPath, "utf-8"));
+    const plugins = ipRaw.plugins ?? {};
+    for (const [key, entries] of Object.entries(plugins)) {
+      if (!key.toLowerCase().includes("context-mode")) continue;
+      const arr = entries as Array<Record<string, unknown>>;
+      if (arr.length > 0 && typeof arr[0].version === "string") {
+        return arr[0].version;
+      }
+    }
+  } catch { /* fallback below */ }
 
-  // Fallback: scan common plugin cache locations
+  // Fallback: read from own package.json
+  const localVer = getLocalVersion();
+  if (localVer !== "unknown") return localVer;
+
+  // Last resort: scan common plugin cache locations
   const bases = [
     resolve(homedir(), ".claude"),
     resolve(homedir(), ".config", "claude"),
@@ -129,16 +142,27 @@ function semverGt(a: string, b: string): boolean {
  * Doctor
  * ------------------------------------------------------- */
 
-async function doctor() {
+async function doctor(): Promise<number> {
   if (process.stdout.isTTY) console.clear();
 
   p.intro(color.bgMagenta(color.white(" context-mode doctor ")));
 
+  let criticalFails = 0;
+
   const s = p.spinner();
   s.start("Running diagnostics");
 
-  const runtimes = detectRuntimes();
-  const available = getAvailableLanguages(runtimes);
+  let runtimes: ReturnType<typeof detectRuntimes>;
+  let available: string[];
+  try {
+    runtimes = detectRuntimes();
+    available = getAvailableLanguages(runtimes);
+  } catch {
+    s.stop("Diagnostics partial");
+    p.log.warn(color.yellow("Could not detect runtimes") + color.dim(" — module may be missing, restart session after upgrade"));
+    p.outro(color.yellow("Doctor could not fully run — try again after restarting Claude Code"));
+    return 1;
+  }
 
   s.stop("Diagnostics complete");
 
@@ -161,10 +185,19 @@ async function doctor() {
   // Language coverage
   const total = 11;
   const pct = ((available.length / total) * 100).toFixed(0);
-  p.log.info(
-    `Language coverage: ${available.length}/${total} (${pct}%)` +
-      color.dim(` — ${available.join(", ")}`),
-  );
+  if (available.length < 2) {
+    criticalFails++;
+    p.log.error(
+      color.red(`Language coverage: ${available.length}/${total} (${pct}%)`) +
+        " — too few runtimes detected" +
+        color.dim(` — ${available.join(", ") || "none"}`),
+    );
+  } else {
+    p.log.info(
+      `Language coverage: ${available.length}/${total} (${pct}%)` +
+        color.dim(` — ${available.join(", ")}`),
+    );
+  }
 
   // Server test
   p.log.step("Testing server initialization...");
@@ -179,13 +212,19 @@ async function doctor() {
     if (result.exitCode === 0 && result.stdout.trim() === "ok") {
       p.log.success(color.green("Server test: PASS"));
     } else {
+      criticalFails++;
       p.log.error(
         color.red("Server test: FAIL") + ` — exit ${result.exitCode}`,
       );
     }
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
-    p.log.error(color.red("Server test: FAIL") + ` — ${message}`);
+    if (message.includes("Cannot find module") || message.includes("MODULE_NOT_FOUND")) {
+      p.log.warn(color.yellow("Server test: SKIP") + color.dim(" — module not available (restart session after upgrade)"));
+    } else {
+      criticalFails++;
+      p.log.error(color.red("Server test: FAIL") + ` — ${message}`);
+    }
   }
 
   // Hooks installed
@@ -199,14 +238,14 @@ async function doctor() {
 
     if (preToolUse && preToolUse.length > 0) {
       const hasCorrectHook = preToolUse.some((entry) =>
-        entry.hooks?.some((h) => h.command?.includes("pretooluse.sh")),
+        entry.hooks?.some((h) => h.command?.includes("pretooluse.mjs")),
       );
       if (hasCorrectHook) {
         p.log.success(color.green("Hooks installed: PASS") + " — PreToolUse hook configured");
       } else {
         p.log.error(
           color.red("Hooks installed: FAIL") +
-            " — PreToolUse exists but does not point to pretooluse.sh" +
+            " — PreToolUse exists but does not point to pretooluse.mjs" +
             color.dim("\n  Run: npx context-mode upgrade"),
         );
       }
@@ -280,15 +319,21 @@ async function doctor() {
     if (row && row.content === "hello world") {
       p.log.success(color.green("FTS5 / better-sqlite3: PASS") + " — native module works");
     } else {
+      criticalFails++;
       p.log.error(color.red("FTS5 / better-sqlite3: FAIL") + " — query returned unexpected result");
     }
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
-    p.log.error(
-      color.red("FTS5 / better-sqlite3: FAIL") +
-        ` — ${message}` +
-        color.dim("\n  Try: npm rebuild better-sqlite3"),
-    );
+    if (message.includes("Cannot find module") || message.includes("MODULE_NOT_FOUND")) {
+      p.log.warn(color.yellow("FTS5 / better-sqlite3: SKIP") + color.dim(" — module not available (restart session after upgrade)"));
+    } else {
+      criticalFails++;
+      p.log.error(
+        color.red("FTS5 / better-sqlite3: FAIL") +
+          ` — ${message}` +
+          color.dim("\n  Try: npm rebuild better-sqlite3"),
+      );
+    }
   }
 
   // Version check
@@ -341,11 +386,19 @@ async function doctor() {
   }
 
   // Summary
+  if (criticalFails > 0) {
+    p.outro(
+      color.red(`Diagnostics failed — ${criticalFails} critical issue(s) found`),
+    );
+    return 1;
+  }
+
   p.outro(
     available.length >= 4
       ? color.green("Diagnostics complete!")
       : color.yellow("Some checks need attention — see above for details"),
   );
+  return 0;
 }
 
 /* -------------------------------------------------------
@@ -393,59 +446,76 @@ async function upgrade() {
 
     // Step 2: Install dependencies + build
     s.start("Installing dependencies & building");
-    execSync("npm install --no-audit --no-fund 2>/dev/null", {
+    execSync("npm install --no-audit --no-fund", {
       cwd: srcDir,
       stdio: "pipe",
       timeout: 60000,
     });
-    execSync("npm run build 2>/dev/null", {
+    execSync("npm run build", {
       cwd: srcDir,
       stdio: "pipe",
       timeout: 30000,
     });
     s.stop("Built successfully");
 
-    // Step 3: Copy to plugin root
-    s.start("Installing files");
+    // Step 3: Update in-place (same directory, no registry changes needed)
+    s.start("Updating files in-place");
+
+    // Clean stale version dirs from previous upgrade attempts
+    const cacheParentMatch = pluginRoot.match(
+      /^(.*[\\/]plugins[\\/]cache[\\/][^\\/]+[\\/][^\\/]+[\\/])/,
+    );
+    if (cacheParentMatch) {
+      const cacheParent = cacheParentMatch[1];
+      const myDir = pluginRoot.replace(cacheParent, "").replace(/[\\/]/g, "");
+      try {
+        const oldDirs = readdirSync(cacheParent).filter(d => d !== myDir);
+        for (const d of oldDirs) {
+          try { rmSync(resolve(cacheParent, d), { recursive: true, force: true }); } catch { /* skip */ }
+        }
+        if (oldDirs.length > 0) {
+          p.log.info(color.dim(`  Cleaned ${oldDirs.length} stale cache dir(s)`));
+        }
+      } catch { /* parent may not exist */ }
+    }
+
+    // Copy new files over old ones — same path, no registry update needed
     const items = [
-      "build", "hooks", "skills", ".claude-plugin",
-      "start.sh", "server.bundle.mjs", "package.json", ".mcp.json",
+      "build", "src", "hooks", "skills", ".claude-plugin",
+      "start.mjs", "server.bundle.mjs", "package.json", ".mcp.json",
     ];
     for (const item of items) {
       try {
-        execSync(`rm -rf "${pluginRoot}/${item}"`, { stdio: "pipe" });
-        execSync(`cp -r "${srcDir}/${item}" "${pluginRoot}/"`, { stdio: "pipe" });
-      } catch { /* some files may not exist */ }
+        rmSync(resolve(pluginRoot, item), { recursive: true, force: true });
+        cpSync(resolve(srcDir, item), resolve(pluginRoot, item), { recursive: true });
+      } catch { /* some files may not exist in source */ }
     }
-    s.stop(color.green("Files installed"));
+    s.stop(color.green(`Updated in-place to v${newVersion}`));
 
-    // Install production deps in plugin root
+    // Fix registry to point back to this pluginRoot (self-heal may have changed it)
+    try {
+      const ipPath = resolve(homedir(), ".claude", "plugins", "installed_plugins.json");
+      const ipRaw = JSON.parse(readFileSync(ipPath, "utf-8"));
+      for (const [key, entries] of Object.entries(ipRaw.plugins || {})) {
+        if (!key.toLowerCase().includes("context-mode")) continue;
+        for (const entry of (entries as Array<Record<string, unknown>>)) {
+          entry.installPath = pluginRoot;
+          entry.version = newVersion;
+          entry.lastUpdated = new Date().toISOString();
+        }
+      }
+      writeFileSync(ipPath, JSON.stringify(ipRaw, null, 2) + "\n", "utf-8");
+      p.log.info(color.dim("  Registry synced to " + pluginRoot));
+    } catch { /* best effort */ }
+
+    // Install production deps (rebuild native modules if needed)
     s.start("Installing production dependencies");
-    execSync("npm install --production --no-audit --no-fund 2>/dev/null", {
+    execSync("npm install --production --no-audit --no-fund", {
       cwd: pluginRoot,
       stdio: "pipe",
       timeout: 60000,
     });
     s.stop("Dependencies ready");
-
-    // Step 2.5: Migrate versioned cache directory if version changed
-    const cacheMatch = pluginRoot.match(
-      /^(.*\/plugins\/cache\/[^/]+\/[^/]+\/)(\d+\.\d+\.\d+[^/]*)$/,
-    );
-    if (cacheMatch && newVersion !== cacheMatch[2] && newVersion !== "unknown") {
-      const oldDirVersion = cacheMatch[2];
-      const newCacheDir = cacheMatch[1] + newVersion;
-      s.start(`Migrating cache: ${oldDirVersion} → ${newVersion}`);
-      try {
-        execSync(`rm -rf "${newCacheDir}"`, { stdio: "pipe" });
-        execSync(`mv "${pluginRoot}" "${newCacheDir}"`, { stdio: "pipe" });
-        pluginRoot = newCacheDir;
-        s.stop(color.green(`Cache directory: ${newVersion}`));
-        changes.push(`Migrated cache: ${oldDirVersion} → ${newVersion}`);
-      } catch {
-        s.stop(color.yellow("Cache migration skipped — using existing directory"));
-      }
-    }
 
     // Update global npm package from same GitHub source
     s.start("Updating npm global package");
@@ -462,7 +532,7 @@ async function upgrade() {
     }
 
     // Cleanup
-    execSync(`rm -rf "${tmpDir}"`, { stdio: "pipe" });
+    rmSync(tmpDir, { recursive: true, force: true });
 
     changes.push(
       newVersion !== localVersion
@@ -479,7 +549,7 @@ async function upgrade() {
     p.log.error(color.red("GitHub pull failed") + ` — ${message}`);
     p.log.info(color.dim("Continuing with hooks/settings fix..."));
     // Cleanup on failure
-    try { execSync(`rm -rf "${tmpDir}"`, { stdio: "pipe" }); } catch { /* ignore */ }
+    try { rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }
   }
 
   // Step 3: Backup settings.json
@@ -499,7 +569,7 @@ async function upgrade() {
 
   // Step 4: Fix hooks
   p.log.step("Configuring PreToolUse hooks...");
-  const hookScriptPath = resolve(pluginRoot, "hooks", "pretooluse.sh");
+  const hookScriptPath = resolve(pluginRoot, "hooks", "pretooluse.mjs");
   const settings = readSettings() ?? {};
 
   const desiredHookEntry = {
@@ -507,7 +577,7 @@ async function upgrade() {
     hooks: [
       {
         type: "command",
-        command: "bash " + hookScriptPath,
+        command: "node " + hookScriptPath,
       },
     ],
   };
@@ -518,7 +588,7 @@ async function upgrade() {
   if (existingPreToolUse && Array.isArray(existingPreToolUse)) {
     const existingIdx = existingPreToolUse.findIndex((entry) => {
       const entryHooks = entry.hooks as Array<{ command?: string }> | undefined;
-      return entryHooks?.some((h) => h.command?.includes("pretooluse.sh"));
+      return entryHooks?.some((h) => h.command?.includes("pretooluse.mjs"));
     });
 
     if (existingIdx >= 0) {
@@ -556,7 +626,7 @@ async function upgrade() {
     accessSync(hookScriptPath, constants.R_OK);
     chmodSync(hookScriptPath, 0o755);
     p.log.success(color.green("Permissions set") + color.dim(" — chmod +x " + hookScriptPath));
-    changes.push("Set pretooluse.sh as executable");
+    changes.push("Set pretooluse.mjs as executable");
   } catch {
     p.log.error(
       color.red("Hook script not found") +
@@ -574,11 +644,22 @@ async function upgrade() {
     p.log.info(color.dim("No changes were needed."));
   }
 
-  // Step 7: Run doctor
+  // Step 7: Run doctor from updated pluginRoot
   p.log.step("Running doctor to verify...");
   console.log();
 
-  await doctor();
+  try {
+    execSync(`node "${resolve(pluginRoot, "build", "cli.js")}" doctor`, {
+      stdio: "inherit",
+      timeout: 30000,
+      cwd: pluginRoot,
+    });
+  } catch {
+    p.log.warn(
+      color.yellow("Doctor had warnings") +
+        color.dim(" — restart your Claude Code session to pick up the new version"),
+    );
+  }
 }
 
 /* -------------------------------------------------------
