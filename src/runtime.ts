@@ -11,7 +11,9 @@ export type Language =
   | "php"
   | "perl"
   | "r"
-  | "dart";
+  | "dart"
+  | "elixir";
+
 
 export interface RuntimeInfo {
   command: string;
@@ -31,7 +33,11 @@ export interface RuntimeMap {
   php: string | null;
   perl: string | null;
   r: string | null;
+
   dart: string | null;
+
+  elixir: string | null;
+
 }
 
 function commandExists(cmd: string): boolean {
@@ -84,7 +90,11 @@ export function detectRuntimes(): RuntimeMap {
       : commandExists("r")
         ? "r"
         : null,
+
     dart: commandExists("dart") ? "dart" : null,
+
+    elixir: commandExists("elixir") ? "elixir" : null,
+
   };
 }
 
@@ -143,8 +153,15 @@ export function getRuntimeSummary(runtimes: RuntimeMap): string {
     );
   if (runtimes.r)
     lines.push(`  R:          ${runtimes.r} (${getVersion(runtimes.r)})`);
+
   if (runtimes.dart)
     lines.push(`  Dart:       ${runtimes.dart} (${getVersion(runtimes.dart)})`);
+
+  if (runtimes.elixir)
+    lines.push(
+      `  Elixir:     ${runtimes.elixir} (${getVersion(runtimes.elixir)})`,
+    );
+
 
   if (!bunPreferred) {
     lines.push("");
@@ -166,7 +183,11 @@ export function getAvailableLanguages(runtimes: RuntimeMap): Language[] {
   if (runtimes.php) langs.push("php");
   if (runtimes.perl) langs.push("perl");
   if (runtimes.r) langs.push("r");
+
   if (runtimes.dart) langs.push("dart");
+
+  if (runtimes.elixir) langs.push("elixir");
+
   return langs;
 }
 
@@ -242,10 +263,18 @@ export function buildCommand(
       }
       return [runtimes.r, filePath];
 
+
     case "dart":
       if (!runtimes.dart) {
         throw new Error("Dart not available. Install dart via https://dart.dev/get-dart");
       }
       return ["dart", "run", filePath];
+
+    case "elixir":
+      if (!runtimes.elixir) {
+        throw new Error( "Elixir not available. Install elixir.");
+      }
+      return ["elixir", filePath];
+
   }
 }
