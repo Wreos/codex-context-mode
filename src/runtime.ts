@@ -10,7 +10,8 @@ export type Language =
   | "rust"
   | "php"
   | "perl"
-  | "r";
+  | "r"
+  | "dart";
 
 export interface RuntimeInfo {
   command: string;
@@ -30,6 +31,7 @@ export interface RuntimeMap {
   php: string | null;
   perl: string | null;
   r: string | null;
+  dart: string | null;
 }
 
 function commandExists(cmd: string): boolean {
@@ -82,6 +84,7 @@ export function detectRuntimes(): RuntimeMap {
       : commandExists("r")
         ? "r"
         : null,
+    dart: commandExists("dart") ? "dart" : null,
   };
 }
 
@@ -140,6 +143,8 @@ export function getRuntimeSummary(runtimes: RuntimeMap): string {
     );
   if (runtimes.r)
     lines.push(`  R:          ${runtimes.r} (${getVersion(runtimes.r)})`);
+  if (runtimes.dart)
+    lines.push(`  Dart:       ${runtimes.dart} (${getVersion(runtimes.dart)})`);
 
   if (!bunPreferred) {
     lines.push("");
@@ -161,6 +166,7 @@ export function getAvailableLanguages(runtimes: RuntimeMap): Language[] {
   if (runtimes.php) langs.push("php");
   if (runtimes.perl) langs.push("perl");
   if (runtimes.r) langs.push("r");
+  if (runtimes.dart) langs.push("dart");
   return langs;
 }
 
@@ -235,5 +241,11 @@ export function buildCommand(
         throw new Error("R not available. Install R / Rscript.");
       }
       return [runtimes.r, filePath];
+
+    case "dart":
+      if (!runtimes.dart) {
+        throw new Error("Dart not available. Install dart via https://dart.dev/get-dart");
+      }
+      return ["dart", "run", filePath];
   }
 }

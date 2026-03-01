@@ -558,6 +558,60 @@ cat("sum:", sum(nums), "\\n")
     skip("R tests", "R / Rscript not available");
   }
 
+  // ===== DART =====
+  console.log("\n--- Dart Execution ---\n");
+
+  if (runtimes.dart) {
+    await test("Dart: hello world", async () => {
+      const r = await executor.execute({
+        language: "dart",
+        code: `print('Hello, Dart!');`,
+      });
+      assert.equal(r.exitCode, 0);
+      assert.ok(r.stdout.includes("Hello, Dart!"));
+    });
+
+    await test("Dart: variables and arithmetic", async () => {
+      const r = await executor.execute({
+        language: "dart",
+        code: `
+  var x = 6;
+  var y = 7;
+  print('result: \${x * y}');`,
+      });
+      assert.equal(r.exitCode, 0);
+      assert.ok(r.stdout.includes("result: 42"));
+    });
+
+    await test("Dart: list + map", async () => {
+      const r = await executor.execute({
+        language: "dart",
+        code: `
+  var nums = [1, 2, 3, 4, 5];
+  var doubled = nums.map((n) => n * 2).toList();
+  print(doubled.join(', '));`,
+      });
+      assert.equal(r.exitCode, 0);
+      assert.ok(r.stdout.includes("2, 4, 6, 8, 10"));
+    });
+
+    await test("Dart: full program with void main", async () => {
+      const r = await executor.execute({
+        language: "dart",
+        code: `void main() {
+  for (var i = 1; i <= 3; i++) {
+    print('line \$i');
+  }
+}`,
+      });
+      assert.equal(r.exitCode, 0);
+      assert.ok(r.stdout.includes("line 1"));
+      assert.ok(r.stdout.includes("line 3"));
+    });
+  } else {
+    skip("Dart tests", "Dart not available");
+  }
+
   // ===== ERROR HANDLING =====
   console.log("\n--- Error Handling ---\n");
 

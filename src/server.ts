@@ -150,12 +150,13 @@ server.registerTool(
           "php",
           "perl",
           "r",
+          "dart",
         ])
         .describe("Runtime language"),
       code: z
         .string()
         .describe(
-          "Source code to execute. Use console.log (JS/TS), print (Python/Ruby/Perl/R), echo (Shell), echo (PHP), or fmt.Println (Go) to output a summary to context.",
+          "Source code to execute. Use console.log (JS/TS), print (Python/Ruby/Perl/R), echo (Shell), echo (PHP), fmt.Println (Go), or print (Dart) to output a summary to context.",
         ),
       timeout: z
         .number()
@@ -404,6 +405,7 @@ server.registerTool(
           "php",
           "perl",
           "r",
+          "dart",
         ])
         .describe("Runtime language"),
       code: z

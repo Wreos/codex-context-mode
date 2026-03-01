@@ -87,6 +87,7 @@ export class PolyglotExecutor {
       php: "php",
       perl: "pl",
       r: "R",
+      dart: "dart",
     };
 
     // Go needs a main package wrapper if not present
@@ -97,6 +98,11 @@ export class PolyglotExecutor {
     // PHP needs opening tag if not present
     if (language === "php" && !code.trimStart().startsWith("<?")) {
       code = `<?php\n${code}`;
+    }
+
+    // Dart needs a main() entry point if not present
+    if (language === "dart" && !code.includes("void main(")) {
+      code = `void main() {\n${code}\n}`;
     }
 
     const fp = join(tmpDir, `script.${extMap[language]}`);
@@ -324,6 +330,8 @@ export class PolyglotExecutor {
         return `my $FILE_CONTENT_PATH = ${escaped};\nopen(my $fh, '<', $FILE_CONTENT_PATH) or die "Cannot open: $!";\nmy $FILE_CONTENT = do { local $/; <$fh> };\nclose($fh);\n${code}`;
       case "r":
         return `FILE_CONTENT_PATH <- ${escaped}\nFILE_CONTENT <- readLines(FILE_CONTENT_PATH, warn=FALSE)\nFILE_CONTENT <- paste(FILE_CONTENT, collapse="\\n")\n${code}`;
+      case "dart":
+        return `import 'dart:io';\nvoid main() {\n  final fileContentPath = ${escaped};\n  final FILE_CONTENT = File(fileContentPath).readAsStringSync();\n${code}\n}`;
     }
   }
 }
