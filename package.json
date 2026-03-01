@@ -1,15 +1,16 @@
 {
-  "name": "context-mode",
+  "name": "codex-context-mode",
   "version": "0.7.3",
   "type": "module",
-  "description": "Claude Code MCP plugin that saves 98% of your context window. Sandboxed code execution, FTS5 knowledge base, and intent-driven search.",
+  "description": "Codex CLI MCP server that saves your context window. Sandboxed code execution, FTS5 knowledge base, and intent-driven search.",
   "author": "Mert Koseoğlu",
   "license": "MIT",
   "keywords": [
     "mcp",
     "model-context-protocol",
-    "claude",
-    "claude-code",
+    "codex",
+    "openai",
+    "codex-cli",
     "context-window",
     "sandbox",
     "code-execution",
@@ -18,21 +19,19 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/mksglu/claude-context-mode"
+    "url": "https://github.com/Wreos/codex-context-mode"
   },
-  "homepage": "https://github.com/mksglu/claude-context-mode#readme",
-  "bugs": "https://github.com/mksglu/claude-context-mode/issues",
+  "homepage": "https://github.com/Wreos/codex-context-mode#readme",
+  "bugs": "https://github.com/Wreos/codex-context-mode/issues",
   "bin": {
     "context-mode": "./build/server.js"
   },
   "files": [
     "build",
-    "hooks",
     "server.bundle.mjs",
-    "skills",
-    ".claude-plugin",
-    ".mcp.json",
     "start.sh",
+    "AGENTS.md",
+    "install.sh",
     "README.md",
     "LICENSE"
   ],

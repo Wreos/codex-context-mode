@@ -1,8 +1,0 @@
-{
-  "mcpServers": {
-    "context-mode": {
-      "command": "sh",
-      "args": ["${CLAUDE_PLUGIN_ROOT}/start.sh"]
-    }
-  }
-}
