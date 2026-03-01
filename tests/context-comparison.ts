@@ -265,6 +265,35 @@ print(f"Statuses: {dict(statuses.most_common())}")
   });
 }
 
+// Add Dart scenario if available
+if (runtimes.dart) {
+  scenarios.push({
+    name: "Flutter widgets (250 lines Dart)",
+    fixture: "flutter-widgets.dart",
+    description:
+      "Flutter social app — FeedScreen + ProfileScreen with Riverpod, GoRouter",
+    language: "dart" as const,
+    code: `
+final lines = FILE_CONTENT.split('\\n');
+final imports = lines.where((l) => l.startsWith('import ')).toList();
+final classes = lines.where((l) => l.trimLeft().startsWith('class ')).toList();
+final widgets = classes.where((l) => l.contains('Widget') || l.contains('State')).toList();
+final methods = lines.where((l) => RegExp(r'^  (Future|void|Widget|String|bool|int) ').hasMatch(l)).toList();
+final providers = imports.where((l) => l.contains('riverpod') || l.contains('provider')).toList();
+
+print('Lines: \${lines.length} | Imports: \${imports.length}');
+print('Classes: \${classes.length} | Widgets: \${widgets.length}');
+print('Methods: \${methods.length} | Providers: \${providers.length}');
+print('');
+print('Classes:');
+for (final c in classes) { print('  \${c.trim().replaceAll(RegExp(r"\\{.*"), "").trim()}'); }
+print('');
+print('Key methods:');
+for (final m in methods.take(8)) { print('  \${m.trim().replaceAll(RegExp(r"\\{.*|async.*"), "").trim()}'); }
+    `,
+  });
+}
+
 // ===== RUN COMPARISON =====
 async function main() {
   console.log("");
