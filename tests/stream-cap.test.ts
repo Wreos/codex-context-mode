@@ -226,6 +226,131 @@ async function main() {
     assert.ok(r.stderr.includes("output capped"), "Interleaved output should trigger cap");
   });
 
+  console.log("\n--- 100MB Real Cap ---\n");
+
+  await test("100MB: default cap fires at 100MB — process killed, not OOM", async () => {
+    const hundredMB = 100 * 1024 * 1024;
+    const executor = new PolyglotExecutor({ hardCapBytes: hundredMB, runtimes });
+    const startMem = process.memoryUsage().rss;
+
+    const r = await executor.execute({
+      language: "shell",
+      // Generate ~200MB of output quickly — cap should fire at 100MB
+      code: 'dd if=/dev/zero bs=1048576 count=200 2>/dev/null | tr "\\0" "x"',
+      timeout: 60_000,
+    });
+
+    assert.ok(
+      r.stderr.includes("output capped"),
+      `Expected cap message, got stderr: ${r.stderr.slice(-200)}`,
+    );
+    assert.ok(
+      r.stderr.includes("100MB"),
+      `Expected '100MB' in cap message: ${r.stderr.slice(-200)}`,
+    );
+    assert.ok(
+      r.stderr.includes("process killed"),
+      "Expected 'process killed' in cap message",
+    );
+
+    const stdoutBytes = Buffer.byteLength(r.stdout);
+    const stdoutMB = stdoutBytes / 1024 / 1024;
+    // Collected stdout should be bounded at cap — not accumulate all 200MB
+    assert.ok(
+      stdoutMB < 110,
+      `Collected ${stdoutMB.toFixed(1)}MB stdout — expected bounded near 100MB cap`,
+    );
+
+    const memGrowthMB = (process.memoryUsage().rss - startMem) / 1024 / 1024;
+    console.log(`    stdout collected: ${stdoutMB.toFixed(1)}MB`);
+    console.log(`    memory growth:    ${memGrowthMB.toFixed(0)}MB`);
+  });
+
+  await test("100MB: JS tight loop generating 150MB is capped — not OOM", async () => {
+    const hundredMB = 100 * 1024 * 1024;
+    const executor = new PolyglotExecutor({ hardCapBytes: hundredMB, runtimes });
+    const startMem = process.memoryUsage().rss;
+
+    const r = await executor.execute({
+      language: "javascript",
+      // Write 4KB chunks in a tight loop — aims for 150MB total
+      code: `const chunk = Buffer.alloc(4096, 88); // 'X'
+let written = 0;
+const target = 150 * 1024 * 1024;
+while (written < target) {
+  process.stdout.write(chunk);
+  written += chunk.length;
+}`,
+      timeout: 60_000,
+    });
+
+    const peakMem = process.memoryUsage().rss;
+    const memGrowthMB = (peakMem - startMem) / 1024 / 1024;
+
+    assert.ok(
+      r.stderr.includes("output capped"),
+      `Expected cap, got: ${r.stderr.slice(-200)}`,
+    );
+    assert.equal(r.timedOut, false, "Should be killed by cap, not timeout");
+    assert.ok(
+      memGrowthMB < 150,
+      `Memory grew ${memGrowthMB.toFixed(0)}MB — expected bounded near 100MB`,
+    );
+
+    console.log(`    memory growth: ${memGrowthMB.toFixed(0)}MB`);
+  });
+
+  await test("100MB: python generating 120MB is capped correctly", async () => {
+    if (!runtimes.python) {
+      console.log("    SKIP: python not available");
+      return;
+    }
+    const hundredMB = 100 * 1024 * 1024;
+    const executor = new PolyglotExecutor({ hardCapBytes: hundredMB, runtimes });
+
+    const r = await executor.execute({
+      language: "python",
+      code: `import sys
+chunk = b'x' * 65536  # 64KB chunks
+written = 0
+target = 120 * 1024 * 1024
+while written < target:
+    sys.stdout.buffer.write(chunk)
+    written += len(chunk)`,
+      timeout: 60_000,
+    });
+
+    assert.ok(
+      r.stderr.includes("output capped"),
+      `Expected cap, got: ${r.stderr.slice(-200)}`,
+    );
+    assert.equal(r.timedOut, false, "Should be cap-killed, not timed out");
+  });
+
+  await test("100MB: normal 50MB output below cap passes through intact", async () => {
+    const hundredMB = 100 * 1024 * 1024;
+    const executor = new PolyglotExecutor({
+      hardCapBytes: hundredMB,
+      maxOutputBytes: hundredMB,
+      runtimes,
+    });
+
+    const r = await executor.execute({
+      language: "shell",
+      // 50MB — below the cap, should complete normally
+      code: 'dd if=/dev/zero bs=1048576 count=50 2>/dev/null | tr "\\0" "x"',
+      timeout: 60_000,
+    });
+
+    assert.ok(
+      !r.stderr.includes("output capped"),
+      "50MB should NOT trigger the 100MB cap",
+    );
+    const stdoutMB = Buffer.byteLength(r.stdout) / 1024 / 1024;
+    assert.ok(stdoutMB > 45, `Expected ~50MB stdout, got ${stdoutMB.toFixed(1)}MB`);
+    console.log(`    stdout: ${stdoutMB.toFixed(1)}MB — passed through intact`);
+  });
+
   console.log("\n--- executeFile Cap ---\n");
 
   await test("executeFile: cap applies to file execution too", async () => {
